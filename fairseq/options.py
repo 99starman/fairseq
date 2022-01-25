@@ -389,6 +389,7 @@ def add_model_args(parser):
     group.add_argument('--arch', '-a', metavar='ARCH',
                        choices=ARCH_MODEL_REGISTRY.keys(),
                        help='model architecture')
+    group.add_argument('--lang', '-lan', help='customized argument: language')
     # fmt: on
     return group
 

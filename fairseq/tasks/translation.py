@@ -194,6 +194,13 @@ class TranslationConfig(FairseqDataclass):
             "argparse_alias": "-t",
         },
     )
+    lang: Optional[str] = field(
+        default=None,
+        metadata={
+            "help": "customized argument: language",
+            "argparse_alias": "-lan",
+        },
+    )
     load_alignments: bool = field(
         default=False, metadata={"help": "load the binarized alignments"}
     )
