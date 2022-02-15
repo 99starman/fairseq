@@ -101,7 +101,7 @@ class TransformerEncoderBase(FairseqEncoder):
         self.embed_positions = (
             PositionalEmbedding(
                 cfg.max_source_positions,
-                embed_dim,
+                embed_dim // 2,
                 self.padding_idx,
                 learned=cfg.encoder.learned_pos,
             )
@@ -186,9 +186,10 @@ class TransformerEncoderBase(FairseqEncoder):
         exact_batch_size, src_length = src_tokens.shape
         type_vector = self.build_type_vector(exact_batch_size, src_length)
 
+        type_embedding = self.type_embedding_obj(type_vector)
         if token_embedding is None:
             token_embedding = self.embed_tokens(src_tokens)
-        x = embed = self.embed_scale * token_embedding
+        x = embed = self.embed_scale * (token_embedding + type_embedding)
         if self.embed_positions is not None:
             # get forward pos_emb, and add backward pos_emb
             raw_pos_emb = self.embed_positions(src_tokens)
@@ -200,7 +201,8 @@ class TransformerEncoderBase(FairseqEncoder):
             # print("backward pos_emb", backward_pos_emb)
             # print("backward check zeroes: ", backward_pos_emb[:, :, 0])
             # print("backward pos_emb size", backward_pos_emb.shape)
-            x = embed + forward_pos_emb + backward_pos_emb
+            pos_emb = torch.cat((forward_pos_emb, backward_pos_emb), 2)
+            x = embed + pos_emb
             # x = embed + self.embed_positions(src_tokens)
         if self.layernorm_embedding is not None:
             x = self.layernorm_embedding(x)
