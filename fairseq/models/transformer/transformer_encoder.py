@@ -150,18 +150,18 @@ class TransformerEncoderBase(FairseqEncoder):
             for line in data:
                 self.char_type_map.append(line[:-1])
 
-    def build_type_vector(self, exact_batch_size, src_length):
+    def build_type_vector(self, src_tokens):
         self.char_type_map = []
         self.read_type_map(self.cfg)
-        # if self.cfg.lang == 'ceb' and self.count < 5:
-        #     print(self.char_type_map)
+        exact_batch_size, src_length = src_tokens.shape
         type_vector = torch.zeros([exact_batch_size, src_length], dtype=torch.int, device=torch.device(
             'cuda' if torch.cuda.is_available() else 'cpu'))
         for i in range(exact_batch_size):
             for j in range(src_length):
-                if self.char_type_map[j] == 'grammatical_symbol':
+                curr_id = src_tokens[i, j]
+                if self.char_type_map[curr_id] == 'grammatical_symbol':
                     type_vector[i, j] = 1
-                if self.char_type_map[j] == 'character':
+                if self.char_type_map[curr_id] == 'character':
                     type_vector[i, j] = 2  # padding - 0, grammatical_symbol - 1, character - 2
         return type_vector
 
@@ -184,7 +184,7 @@ class TransformerEncoderBase(FairseqEncoder):
     ):
         # embed tokens and positions
         exact_batch_size, src_length = src_tokens.shape
-        type_vector = self.build_type_vector(exact_batch_size, src_length)
+        type_vector = self.build_type_vector(src_tokens)
 
         type_embedding = self.type_embedding_obj(type_vector)
         if token_embedding is None:
@@ -201,8 +201,7 @@ class TransformerEncoderBase(FairseqEncoder):
             # print("backward pos_emb", backward_pos_emb)
             # print("backward check zeroes: ", backward_pos_emb[:, :, 0])
             # print("backward pos_emb size", backward_pos_emb.shape)
-            pos_emb = torch.cat((forward_pos_emb, backward_pos_emb), 2)
-            x = embed + pos_emb
+            x = embed + torch.cat((forward_pos_emb, backward_pos_emb), 2)
             # x = embed + self.embed_positions(src_tokens)
         if self.layernorm_embedding is not None:
             x = self.layernorm_embedding(x)
