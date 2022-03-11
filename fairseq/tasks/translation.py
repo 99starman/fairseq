@@ -201,6 +201,13 @@ class TranslationConfig(FairseqDataclass):
             "argparse_alias": "-lan",
         },
     )
+    student: Optional[float] = field(
+        default=0.0,
+        metadata={
+            "help": "percentage of example to use student forcing",
+            "argparse_alias": "-stu",
+        },
+    )
     load_alignments: bool = field(
         default=False, metadata={"help": "load the binarized alignments"}
     )
@@ -269,6 +276,9 @@ class TranslationConfig(FairseqDataclass):
     eval_bleu_print_samples: bool = field(
         default=False, metadata={"help": "print sample generations during validation"}
     )
+    #student: float = field(
+    #  default=0.0, metadata={"help": "percentage of example to use student forcing"}
+    #)
 
 
 @register_task("translation", dataclass=TranslationConfig)
