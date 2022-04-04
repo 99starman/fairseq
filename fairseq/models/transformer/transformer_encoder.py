@@ -36,9 +36,18 @@ def module_name_fordropout(module_name: str) -> str:
         return module_name
 
 
-# takes in a raw positional embedding, zero out any emb vector that doesn't corresponds to a character
-def get_pos_emb(raw_pos_emb, type_vector, batch, src_len):
-    for i in range(batch):
+# count the exact src_length for each input src (paddings excluded)
+def get_src_lengths(src_tokens):    # each row: src_token [1, 4, 16, 7, 9, 10, 5, 3, 2] -> length 8 (1 is pad)
+    padding_mask = src_tokens != 1
+    return torch.sum(padding_mask, dim=1)
+
+
+# takes in a raw positional embedding, zero out any emb vector that doesn't correspond to a character
+def get_pos_emb(raw_pos_emb, type_vector, src_tokens):
+    batch_size, src_len = src_tokens.shape
+    exact_src_lengths = get_src_lengths(src_tokens)   # tensor size: [batch_size, 1]
+    # TODO: dispatch each exact_src_length from this tensor without looping and determine if already in the dict
+    for i in range(batch_size):
         for j in range(src_len):
             if type_vector[i, j] != 2:
                 raw_pos_emb[i, j, :] = torch.zeros_like(raw_pos_emb[i, j, :])
@@ -51,7 +60,8 @@ def reverse_pos_emb(forward_pos_emb, batch, src_len):
     # print("emd dim", emd_dim)
     backward_pos_emb = torch.zeros([batch, src_len, emd_dim], dtype=torch.float, device=torch.device(
         'cuda' if torch.cuda.is_available() else 'cpu'))
-    print("backward_pos_emb", backward_pos_emb.get_device())
+    # print("backward_pos_emb", backward_pos_emb.get_device())
+    # printed: always cuda:0, just for previous initial model checking on cpu with Colab
     for i in range(batch):
         stack = []
         for j in range(src_len):
@@ -68,7 +78,6 @@ def reverse_pos_emb(forward_pos_emb, batch, src_len):
                 backward_pos_emb[i, j, :] = emb
     return backward_pos_emb
 
-# get type vector
 
 
 class TransformerEncoderBase(FairseqEncoder):
@@ -138,7 +147,7 @@ class TransformerEncoderBase(FairseqEncoder):
             self.layer_norm = LayerNorm(embed_dim, export=cfg.export)
         else:
             self.layer_norm = None
-        # dict of <exact src_len, positional embedding>
+        # dict of <exact src_len for each row of src_tokens, positional embedding>
         self.pos_emb_dict = {}
         # initialize map and embedding object
         self.char_type_map = []
@@ -150,7 +159,7 @@ class TransformerEncoderBase(FairseqEncoder):
         # print("ROOT_DIR", ROOT_DIR)  # 'fairseq/models/transformer'
         # assuming the data-bin folder is a direct child of some folder which is a sibling of the fairseq folder
         data_path = "./././data-bin/{}_map.txt".format(cfg.lang)
-        # todo: get path more robustly
+        # TODO: get path more robustly
         # print('data_path', data_path)
         with open(data_path, 'r') as data:
             for line in data:
@@ -160,8 +169,8 @@ class TransformerEncoderBase(FairseqEncoder):
         exact_batch_size, src_length = src_tokens.shape
         type_vector = torch.zeros([exact_batch_size, src_length], dtype=torch.int, device=torch.device(
             'cuda' if torch.cuda.is_available() else 'cpu'))
-        print("type_vector ", type_vector.get_device())
-        # printed: always cuda, just for initial model checking on cpu with colab
+        # print("type_vector ", type_vector.get_device())
+        # printed: always cuda:0, just for previous initial model checking on cpu with Colab
         for i in range(exact_batch_size):
             for j in range(src_length):
                 curr_id = src_tokens[i, j]
@@ -191,10 +200,9 @@ class TransformerEncoderBase(FairseqEncoder):
             self, src_tokens, token_embedding: Optional[torch.Tensor] = None
     ):
         # embed tokens and positions
-        exact_batch_size, src_length = src_tokens.shape
 
+        # get type vector TODO: optimize build_type_vector
         type_vector = self.build_type_vector(src_tokens)
-
         type_embedding = self.type_embedding_obj(type_vector)
         if token_embedding is None:
             token_embedding = self.embed_tokens(src_tokens)
@@ -202,7 +210,7 @@ class TransformerEncoderBase(FairseqEncoder):
         if self.embed_positions is not None:
             # get forward pos_emb, and add backward pos_emb
             raw_pos_emb = self.embed_positions(src_tokens)
-            forward_pos_emb = get_pos_emb(raw_pos_emb, type_vector, exact_batch_size, src_length)
+            forward_pos_emb = get_pos_emb(raw_pos_emb, type_vector, src_tokens)
             # print("forward pos_emb", forward_pos_emb)
             # print("forward check zeroes: ", forward_pos_emb[:, :, 0])
             # print("forward pos_emb size", forward_pos_emb.shape)
