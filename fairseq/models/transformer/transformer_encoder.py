@@ -42,16 +42,14 @@ def get_src_lengths(src_tokens):    # each row: src_token [1, 4, 16, 7, 9, 10, 5
     return torch.sum(padding_mask, dim=1)
 
 
-# takes in a raw positional embedding, zero out any emb vector that doesn't correspond to a character
-def get_pos_emb(raw_pos_emb, type_vector, src_tokens):
-    batch_size, src_len = src_tokens.shape
-    exact_src_lengths = get_src_lengths(src_tokens)   # tensor size: [batch_size, 1]
-    # TODO: dispatch each exact_src_length from this tensor without looping and determine if already in the dict
+def build_pos_emb(forward_pos_emb, type_vector, batch_size, src_len):
+    # build forward positional embedding
     for i in range(batch_size):
         for j in range(src_len):
             if type_vector[i, j] != 2:
-                raw_pos_emb[i, j, :] = torch.zeros_like(raw_pos_emb[i, j, :])
-    return raw_pos_emb
+                forward_pos_emb[i, j, :] = torch.zeros_like(forward_pos_emb[i, j, :])
+    backward_pos_emb = reverse_pos_emb(forward_pos_emb, batch_size, src_len)
+    return torch.cat((forward_pos_emb, backward_pos_emb), 2)
 
 
 # get the backward positional embedding (zero vectors unchanged, reverse others)
@@ -196,11 +194,29 @@ class TransformerEncoderBase(FairseqEncoder):
         layer = fsdp_wrap(layer, min_num_params=min_params_to_wrap)
         return layer
 
+    # takes in a raw positional embedding, zero out any emb vector that doesn't correspond to a character
+    def get_pos_emb(self, raw_pos_emb, type_vector, src_tokens):
+        exact_src_lengths = get_src_lengths(src_tokens)  # tensor size: [batch_size]
+        # TODO: dispatch each exact_src_length from this tensor without looping and determine if already in the dict
+        # using a loop for now
+        return torch.stack([
+            self.get_cache(raw_pos_emb, length, type_vector) for length in exact_src_lengths.tolist()
+        ], dim=1)
+
+    def get_cache(self, raw_pos_emb, length, type_vector):
+        batch_size, src_len, _ = raw_pos_emb.shape
+        cache = self.pos_emb_dict.get(length)
+        if cache is not None:
+            return cache
+        else:
+            pos_emb = build_pos_emb(raw_pos_emb, type_vector, batch_size, src_len)
+            self.pos_emb_dict[length] = pos_emb
+            return pos_emb
+
     def forward_embedding(
             self, src_tokens, token_embedding: Optional[torch.Tensor] = None
     ):
         # embed tokens and positions
-
         # get type vector TODO: optimize build_type_vector
         type_vector = self.build_type_vector(src_tokens)
         type_embedding = self.type_embedding_obj(type_vector)
@@ -210,15 +226,8 @@ class TransformerEncoderBase(FairseqEncoder):
         if self.embed_positions is not None:
             # get forward pos_emb, and add backward pos_emb
             raw_pos_emb = self.embed_positions(src_tokens)
-            forward_pos_emb = get_pos_emb(raw_pos_emb, type_vector, src_tokens)
-            # print("forward pos_emb", forward_pos_emb)
-            # print("forward check zeroes: ", forward_pos_emb[:, :, 0])
-            # print("forward pos_emb size", forward_pos_emb.shape)
-            backward_pos_emb = reverse_pos_emb(forward_pos_emb, exact_batch_size, src_length)
-            # print("backward pos_emb", backward_pos_emb)
-            # print("backward check zeroes: ", backward_pos_emb[:, :, 0])
-            # print("backward pos_emb size", backward_pos_emb.shape)
-            x = embed + torch.cat((forward_pos_emb, backward_pos_emb), 2)
+            pos_emb = self.get_pos_emb(raw_pos_emb, type_vector, src_tokens)
+            x = embed + pos_emb
             # x = embed + self.embed_positions(src_tokens)
         if self.layernorm_embedding is not None:
             x = self.layernorm_embedding(x)
