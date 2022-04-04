@@ -51,6 +51,7 @@ def reverse_pos_emb(forward_pos_emb, batch, src_len):
     # print("emd dim", emd_dim)
     backward_pos_emb = torch.zeros([batch, src_len, emd_dim], dtype=torch.float, device=torch.device(
         'cuda' if torch.cuda.is_available() else 'cpu'))
+    print("backward_pos_emb", backward_pos_emb.get_device())
     for i in range(batch):
         stack = []
         for j in range(src_len):
@@ -66,6 +67,8 @@ def reverse_pos_emb(forward_pos_emb, batch, src_len):
             else:
                 backward_pos_emb[i, j, :] = emb
     return backward_pos_emb
+
+# get type vector
 
 
 class TransformerEncoderBase(FairseqEncoder):
@@ -135,8 +138,11 @@ class TransformerEncoderBase(FairseqEncoder):
             self.layer_norm = LayerNorm(embed_dim, export=cfg.export)
         else:
             self.layer_norm = None
+        # dict of <exact src_len, positional embedding>
+        self.pos_emb_dict = {}
         # initialize map and embedding object
         self.char_type_map = []
+        self.read_type_map(self.cfg)
         self.type_embedding_obj = fairseq.models.transformer.Embedding(3, self.embed_tokens.embedding_dim, None)
 
     def read_type_map(self, cfg):
@@ -151,11 +157,11 @@ class TransformerEncoderBase(FairseqEncoder):
                 self.char_type_map.append(line[:-1])
 
     def build_type_vector(self, src_tokens):
-        self.char_type_map = []
-        self.read_type_map(self.cfg)
         exact_batch_size, src_length = src_tokens.shape
         type_vector = torch.zeros([exact_batch_size, src_length], dtype=torch.int, device=torch.device(
             'cuda' if torch.cuda.is_available() else 'cpu'))
+        print("type_vector ", type_vector.get_device())
+        # printed: always cuda, just for initial model checking on cpu with colab
         for i in range(exact_batch_size):
             for j in range(src_length):
                 curr_id = src_tokens[i, j]
@@ -164,6 +170,8 @@ class TransformerEncoderBase(FairseqEncoder):
                 if self.char_type_map[curr_id] == 'character':
                     type_vector[i, j] = 2  # padding - 0, grammatical_symbol - 1, character - 2
         return type_vector
+
+
 
     def build_encoder_layer(self, cfg):
         layer = transformer_layer.TransformerEncoderLayerBase(
@@ -184,6 +192,7 @@ class TransformerEncoderBase(FairseqEncoder):
     ):
         # embed tokens and positions
         exact_batch_size, src_length = src_tokens.shape
+
         type_vector = self.build_type_vector(src_tokens)
 
         type_embedding = self.type_embedding_obj(type_vector)
