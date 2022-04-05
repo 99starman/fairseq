@@ -145,7 +145,7 @@ class TransformerEncoderBase(FairseqEncoder):
             self.layer_norm = LayerNorm(embed_dim, export=cfg.export)
         else:
             self.layer_norm = None
-        # dict of <exact src_len for each row of src_tokens, positional embedding>
+        # dict of <a tuple of exact src_lengths, corresponding positional embeddings>
         self.pos_emb_dict = {}
         # initialize map and embedding object
         self.char_type_map = []
@@ -194,23 +194,17 @@ class TransformerEncoderBase(FairseqEncoder):
         layer = fsdp_wrap(layer, min_num_params=min_params_to_wrap)
         return layer
 
-    # takes in a raw positional embedding, zero out any emb vector that doesn't correspond to a character
+    # takes in a raw positional embedding for src_tokens, get transformed positional embedding from cache
     def get_pos_emb(self, raw_pos_emb, type_vector, src_tokens):
+        batch_size, src_len = src_tokens.shape
         exact_src_lengths = get_src_lengths(src_tokens)  # tensor size: [batch_size]
-        # TODO: dispatch each exact_src_length from this tensor without looping and determine if already in the dict
-        # using a loop for now
-        return torch.stack([
-            self.get_cache(raw_pos_emb, length, type_vector) for length in exact_src_lengths.tolist()
-        ], dim=1)
-
-    def get_cache(self, raw_pos_emb, length, type_vector):
-        batch_size, src_len, _ = raw_pos_emb.shape
-        cache = self.pos_emb_dict.get(length)
+        key = tuple(exact_src_lengths.tolist())
+        cache = self.pos_emb_dict.get(key)
         if cache is not None:
             return cache
         else:
             pos_emb = build_pos_emb(raw_pos_emb, type_vector, batch_size, src_len)
-            self.pos_emb_dict[length] = pos_emb
+            self.pos_emb_dict[key] = pos_emb
             return pos_emb
 
     def forward_embedding(
